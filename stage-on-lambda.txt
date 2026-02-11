@@ -1,0 +1,26 @@
+3. The "Daily Routine" on Lambda
+Before you start training your Unitree G1 or drone AI models, run this in the Lambda terminal:
+
+Bash
+# 1. Get the latest drone code/graphics from GitHub
+git pull origin main
+
+# 2. Verify everything is in sync
+git status
+4. Moving Data Back to your PC
+After your AI training finishes and you have new results or "weights":
+
+Bash
+# 1. Stage the new data
+git add .
+
+# 2. Save the progress
+git commit -m "Results from Lambda training session"
+
+# 3. Send to GitHub so you can see it on your iPhone/PC
+git push origin main
+5. Managing Large Files (Robotics Tip)
+Since you are working with MuJoCo and robotics, remember that Git is best for code. If you generate 50GB of training logs, don't push those! Use your .gitignore to keep the repo fast.
+
+Why this works for you
+This workflow connects your MSEE robotics background with modern DevOps. By pulling on the desktop-tunnel terminal, you ensure the high-perfor
