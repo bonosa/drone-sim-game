@@ -1,0 +1,28 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments (Crucial for your cloud GPU work)
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Robotics & Simulation specific
+*.log
+*.pcap
+build/
+devel/
+install/
+.pytest_cache/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Large model files/weights (Keep these out of GitHub)
+*.pth
+*.onnx
+*.weights
