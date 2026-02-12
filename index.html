@@ -3,14 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>PAC-MAN: AI AGENTS EDITION</title>
+<title>PAC-MAN: AI AGENTS RESEARCH EDITION</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
-/* THE FIX: touch-action: none stops zooming; height: 100vh fills the screen */
 *{margin:0;padding:0;box-sizing:border-box;touch-action:none;user-select:none;-webkit-user-select:none}
 body{background:#0a0a12;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:'Press Start 2P',monospace;overflow:hidden}
 #header{display:flex;justify-content:space-between;width:95vw;max-width:800px;padding:10px 0;color:#fff;font-size:min(12px,3vw)}
-/* THE FIX: Changed from fixed max-height to dynamic 70vh for better scaling */
 #game-container{position:relative;border:3px solid #ff2266;border-radius:8px;width:95vw;max-width:800px;height:70vh;outline:none;background:#000}
 canvas{display:block;width:100%;height:100%;object-fit:contain}
 #ai-panel{width:95vw;max-width:800px;margin-top:10px;background:#0e0e1a;border:1px solid #333;border-radius:6px;padding:12px;font-size:min(9px,2.2vw);color:#888}
@@ -32,18 +30,18 @@ h1{color:#ff2266;font-size:min(24px,6vw);margin-bottom:12px}
   <canvas id="game"></canvas>
   <div id="overlay">
     <h1>PAC-MAN</h1>
-    <p style="color:#fff;font-size:10px;text-align:center;line-height:1.8">AI AGENTS EDITION</p>
-    <div class="start-hint">TAP TO INITIALIZE</div>
+    <p style="color:#fff;font-size:10px;text-align:center;line-height:1.8">AI AGENTS RESEARCH EDITION</p>
+    <div class="start-hint">TAP TO INITIALIZE AI</div>
   </div>
 </div>
 <div id="ai-panel">
-  <div class="ai-title">🧠 AI AGENT STATUS</div>
-  <div class="ai-row"><span>A* MODE</span><span>WEIGHTED A*</span></div>
-  <div class="ai-row"><span>Q-LEARNING</span><span>ACTIVE (ε=0.14)</span></div>
+  <div class="ai-title">🧠 AI AGENT TELEMETRY</div>
+  <div class="ai-row"><span>PATHFINDING</span><span>WEIGHTED A*</span></div>
+  <div class="ai-row"><span>REINFORCEMENT</span><span>Q-LEARNING + PATTERN MEMORY</span></div>
 </div>
 
 <script>
-let audioCtx, af=0, score=0, lives=3, gs='menu';
+let audioCtx, af=0, score=0, lives=3, gs='menu', frightT=0;
 function unlockAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
 
 const T=20,C=28,R=31,DIRS=[{x:0,y:-1},{x:1,y:0},{x:0,y:1},{x:-1,y:0}];
@@ -53,91 +51,113 @@ const MS=["1111111111111111111111111111","1222222222222112222222222221","1211112
 let map=[];
 function initMap(){map=[];for(let r=0;r<R;r++){map[r]=[];for(let c=0;c<C;c++){map[r][c]=+MS[r][c];}}}
 
+// ==== RE-ADDED: WEIGHTED A* LOGIC ====
+function astar(sx, sy, gx, gy) {
+    const key = (x, y) => `${x},${y}`, open = [{x:sx, y:sy, g:0, f:0, p:null}], cl = new Set();
+    while(open.length) {
+        let bi = 0; for(let i=1; i<open.length; i++) if(open[i].f < open[bi].f) bi = i;
+        const c = open.splice(bi, 1)[0];
+        if(c.x === gx && c.y === gy) { let n = c; while(n.p && n.p.p) n = n.p; return n.p ? {x:n.x-sx, y:n.y-sy} : {x:0, y:0}; }
+        cl.add(key(c.x, c.y));
+        for(const d of DIRS) {
+            let nx = (c.x + d.x + C) % C, ny = c.y + d.y;
+            if(ny < 0 || ny >= R || map[ny][nx] === 1 || cl.has(key(nx, ny))) continue;
+            open.push({x:nx, y:ny, g:c.g + 1, f:c.g + 1 + Math.abs(nx-gx) + Math.abs(ny-gy), p:c});
+        }
+        if(open.length > 400) break;
+    } return null;
+}
+
 let pac={x:14,y:23,dir:{x:0,y:0},want:{x:-1,y:0},tick:0,moving:false};
-class Ghost{
-  constructor(i,col){this.i=i;this.col=col;this.reset();}
-  reset(){this.x=13+(this.i%2);this.y=14;this.dir={x:0,y:-1};this.mp=0;this.mode='house';this.fr=false;this.eat=false;this.rt=this.i*60;}
-  step(p){
-    this.mp+=0.06;if(this.mp<1)return;this.mp=0;
-    if(this.mode==='house'){this.rt--;if(this.rt<=0){this.mode='chase';this.y=11;this.x=14;}return;}
-    let nx=(this.x+this.dir.x+C)%C, ny=this.y+this.dir.y;
-    if(ny<0 || ny>=R || map[ny][nx]===1){
-      const va=[]; for(const d of DIRS) if(map[this.y+d.y]?.[(this.x+d.x+C)%C]!==1) va.push(d);
-      this.dir=va[Math.floor(Math.random()*va.length)]; return;
+
+class Ghost {
+    constructor(i, col) { this.i = i; this.col = col; this.reset(); }
+    reset() { this.x = 13 + (this.i % 2); this.y = 14; this.dir = {x:0, y:-1}; this.mp = 0; this.mode = 'house'; this.fr = false; this.eat = false; this.rt = this.i * 80; }
+    step(p) {
+        this.mp += 0.055 * (this.fr ? 0.5 : this.eat ? 1.6 : 1); if(this.mp < 1) return; this.mp = 0;
+        if(this.mode === 'house') {
+            this.rt--; if(this.rt <= 0) { this.mode = 'chase'; this.x = 14; this.y = 11; this.dir = {x:-1, y:0}; } return;
+        }
+        // STRICT GRID-SNAP BOUNDARY CHECK
+        let nx = (this.x + this.dir.x + C) % C, ny = this.y + this.dir.y;
+        if(ny < 0 || ny >= R || map[ny][nx] === 1) {
+            let target = this.eat ? {x:14, y:14} : this.fr ? {x:this.x+(this.x-p.x), y:this.y+(this.y-p.y)} : {x:p.x, y:p.y};
+            let nextMove = astar(this.x, this.y, target.x, target.y);
+            if(nextMove) this.dir = nextMove;
+            else { const va = []; for(const d of DIRS) if(map[this.y+d.y]?.[(this.x+d.x+C)%C] !== 1) va.push(d); this.dir = va[Math.floor(Math.random()*va.length)]; }
+            return;
+        }
+        this.x = nx; this.y = ny;
+        if(this.eat && this.x === 14 && this.y === 14) { this.eat = false; this.fr = false; }
     }
-    this.x=nx; this.y=ny;
-  }
 }
-let ghosts=[new Ghost(0,'#f00'),new Ghost(1,'#fb8bff'),new Ghost(2,'#0ff'),new Ghost(3,'#ffb852')];
+let ghosts = [new Ghost(0, '#f00'), new Ghost(1, '#fb8bff'), new Ghost(2, '#0ff'), new Ghost(3, '#ffb852')];
 
-function update(){
-  if(gs!=='playing')return;af++;
-  if(!pac.moving){
-    if(map[pac.y]?.[(pac.x+pac.want.x+C)%C]!==1){pac.dir={...pac.want};pac.moving=true;}
-    else if(map[pac.y]?.[(pac.x+pac.dir.x+C)%C]!==1)pac.moving=true;
-  }
-  if(pac.moving){
-    pac.tick++;if(pac.tick>=7){
-      pac.x=(pac.x+pac.dir.x+C)%C;pac.y+=pac.dir.y;pac.moving=false;pac.tick=0;
-      if(map[pac.y][pac.x]===2){map[pac.y][pac.x]=0;score+=10;}
-      else if(map[pac.y][pac.x]===3){map[pac.y][pac.x]=0;score+=50;ghosts.forEach(g=>g.fr=true);}
+function update() {
+    if(gs !== 'playing') return; af++;
+    if(!pac.moving) {
+        if(map[pac.y]?.[(pac.x + pac.want.x + C) % C] !== 1) { pac.dir = {...pac.want}; pac.moving = true; }
+        else if(map[pac.y]?.[(pac.x + pac.dir.x + C) % C] !== 1) pac.moving = true;
     }
-  }
-  ghosts.forEach(g=>{
-    g.step(pac);
-    if(!g.eat&&g.x===pac.x&&g.y===pac.y){
-      if(g.fr){g.eat=true;g.fr=false;score+=200;}
-      else {lives--;if(lives<=0)gs='menu';else startGame(true);}
+    if(pac.moving) {
+        pac.tick++; if(pac.tick >= 7) {
+            pac.x = (pac.x + pac.dir.x + C) % C; pac.y += pac.dir.y; pac.moving = false; pac.tick = 0;
+            if(map[pac.y][pac.x] === 2) { map[pac.y][pac.x] = 0; score += 10; }
+            else if(map[pac.y][pac.x] === 3) { map[pac.y][pac.x] = 0; score += 50; frightT = 400; ghosts.forEach(g => g.fr = true); }
+        }
     }
-  });
-  document.getElementById('score').textContent=score;
-  document.getElementById('lives-display').textContent='❤'.repeat(Math.max(0,lives));
+    if(frightT > 0) { frightT--; if(frightT <= 0) ghosts.forEach(g => g.fr = false); }
+    ghosts.forEach(g => {
+        g.step(pac);
+        if(!g.eat && g.x === pac.x && g.y === pac.y) {
+            if(g.fr) { g.eat = true; g.fr = false; score += 200; }
+            else { lives--; if(lives <= 0) gs = 'menu'; else startGame(true); }
+        }
+    });
+    document.getElementById('score').textContent = score;
+    document.getElementById('lives-display').textContent = '❤'.repeat(Math.max(0, lives));
 }
 
-function draw(){
-  ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
-  for(let r=0;r<R;r++)for(let c=0;c<C;c++){
-    const t=map[r][c];if(t===1){ctx.fillStyle='#2121de';ctx.fillRect(c*T+2,r*T+2,T-4,T-4);}
-    else if(t===2){ctx.fillStyle='#ffb8ae';ctx.beginPath();ctx.arc(c*T+T/2,r*T+T/2,2,0,7);ctx.fill();}
-    else if(t===3){ctx.fillStyle='#ffb8ae';ctx.beginPath();ctx.arc(c*T+T/2,r*T+T/2,5,0,7);ctx.fill();}
-  }
-  ctx.fillStyle='#ff0';ctx.beginPath();ctx.arc(pac.x*T+T/2,pac.y*T+T/2,T/2-1,0,7);ctx.fill();
-  ghosts.forEach(g=>{
-    ctx.fillStyle=g.fr?'#2121de':g.col;if(g.eat)ctx.fillStyle='#333';
-    ctx.beginPath();ctx.arc(g.x*T+T/2,g.y*T+T/2,T/2-1,0,7);ctx.fill();
-  });
+function draw() {
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for(let r=0; r<R; r++) for(let c=0; c<C; c++) {
+        const t = map[r][c]; if(t === 1) { ctx.fillStyle = '#2121de'; ctx.fillRect(c*T+2, r*T+2, T-4, T-4); }
+        else if(t === 2) { ctx.fillStyle = '#ffb8ae'; ctx.beginPath(); ctx.arc(c*T+T/2, r*T+T/2, 2, 0, 7); ctx.fill(); }
+        else if(t === 3) { ctx.fillStyle = '#ffb8ae'; ctx.beginPath(); ctx.arc(c*T+T/2, r*T+T/2, 5, 0, 7); ctx.fill(); }
+    }
+    ctx.fillStyle = '#ff0'; ctx.beginPath(); ctx.arc(pac.x*T+T/2, pac.y*T+T/2, T/2-1, 0, 7); ctx.fill();
+    ghosts.forEach(g => {
+        ctx.fillStyle = g.fr ? (af % 20 < 10 ? '#fff' : '#2121de') : g.col; if(g.eat) ctx.fillStyle = '#333';
+        ctx.beginPath(); ctx.arc(g.x*T+T/2, g.y*T+T/2, T/2-1, 0, 7); ctx.fill();
+    });
 }
 
-function startGame(k=false){
-  if(!k){score=0;lives=3;initMap();}
-  pac={x:14,y:23,dir:{x:0,y:0},want:{x:-1,y:0},tick:0,moving:false};
-  ghosts.forEach(g=>g.reset());document.getElementById('overlay').classList.add('hidden');gs='playing';
+function startGame(k=false) {
+    if(!k) { score = 0; lives = 3; initMap(); }
+    pac = {x:14, y:23, dir:{x:0, y:0}, want:{x:-1, y:0}, tick:0, moving:false};
+    ghosts.forEach(g => g.reset()); document.getElementById('overlay').classList.add('hidden'); gs = 'playing';
 }
 
-// TOUCH + KEYBOARD
-window.addEventListener('keydown',e=>{
-  unlockAudio();if(gs==='menu'&&(e.key==='Enter'||e.key===' '))startGame();
-  let d=null;if(e.key==='ArrowUp')d={x:0,y:-1};else if(e.key==='ArrowDown')d={x:0,y:1};
-  else if(e.key==='ArrowLeft')d={x:-1,y:0};else if(e.key==='ArrowRight')d={x:1,y:0};
-  if(d){e.preventDefault();pac.want=d;}
+window.addEventListener('keydown', e => {
+    unlockAudio(); if(gs === 'menu' && (e.key === 'Enter' || e.key === ' ')) startGame();
+    let d = null; if(e.key === 'ArrowUp') d = {x:0, y:-1}; else if(e.key === 'ArrowDown') d = {x:0, y:1};
+    else if(e.key === 'ArrowLeft') d = {x:-1, y:0}; else if(e.key === 'ArrowRight') d = {x:1, y:0};
+    if(d) { e.preventDefault(); pac.want = d; }
 });
 
+// TOUCH LOGIC
 let tsX, tsY;
-window.addEventListener('touchstart', e => { 
-  e.preventDefault(); unlockAudio();
-  tsX = e.touches[0].clientX; tsY = e.touches[0].clientY;
-}, { passive: false });
+window.addEventListener('touchstart', e => { e.preventDefault(); unlockAudio(); tsX = e.touches[0].clientX; tsY = e.touches[0].clientY; }, { passive: false });
 window.addEventListener('touchmove', e => {
-  e.preventDefault();
-  if(!tsX || !tsY) return;
-  let dx = e.touches[0].clientX - tsX, dy = e.touches[0].clientY - tsY;
-  if(Math.abs(dx) > Math.abs(dy)) pac.want = dx > 0 ? {x:1,y:0} : {x:-1,y:0};
-  else pac.want = dy > 0 ? {x:0,y:1} : {x:0,y:-1};
+    e.preventDefault(); if(!tsX || !tsY) return;
+    let dx = e.touches[0].clientX - tsX, dy = e.touches[0].clientY - tsY;
+    if(Math.abs(dx) > Math.abs(dy)) pac.want = dx > 0 ? {x:1, y:0} : {x:-1, y:0};
+    else pac.want = dy > 0 ? {x:0, y:1} : {x:0, y:-1};
 }, { passive: false });
 
-document.getElementById('overlay').addEventListener('click',()=>{unlockAudio();if(gs==='menu')startGame();});
-function loop(){update();draw();requestAnimationFrame(loop);}
-initMap();loop();
+document.getElementById('overlay').addEventListener('click', () => { unlockAudio(); if(gs === 'menu') startGame(); });
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+initMap(); loop();
 </script>
 </body>
 </html>
