@@ -236,7 +236,6 @@ class Ghost{
     switch(this.i){case 0:return pr||{x:p.x,y:p.y};case 1:return{x:p.x+p.dir.x*4,y:p.y+p.dir.y*4};case 2:const b=ghosts[0];const ax=p.x+p.dir.x*2,ay=p.y+p.dir.y*2;return{x:ax+(ax-b.x),y:ay+(ay-b.y)};case 3:return Math.abs(this.x-p.x)+Math.abs(this.y-p.y)>8?{x:p.x,y:p.y}:this.scat;default:return{x:p.x,y:p.y};}
   }
   act(p){
-    if(this.mode==='house'){this.rt--;if(this.rt<=0){this.mode=isScat?'scatter':'chase';this.x=14;this.y=11;this.dir={x:-1,y:0};this.mp=0;}return null;}
     const opp={x:-this.dir.x,y:-this.dir.y};const va=[];
     for(let i=0;i<4;i++){const d=DIRS[i];if(d.x===opp.x&&d.y===opp.y)continue;if(gok(wx(this.x+d.x),this.y+d.y,this.mode,this.eat))va.push(i);}
     if(!va.length)return this.dir;
@@ -251,12 +250,14 @@ class Ghost{
     this.ql.ls=st;this.ql.la=ch;return DIRS[ch];
   }
   step(p){
+    // House release timer runs every frame, not gated by speed
+    if(this.mode==='house'){this.rt--;if(this.rt<=0){this.mode=isScat?'scatter':'chase';this.x=14;this.y=11;this.dir={x:-1,y:0};this.mp=0;}return;}
     const sm=this.fr?.45:this.eat?1.6:1;this.mp+=this.spd*sm;if(this.mp<1)return;this.mp=0;
     // Decide direction BEFORE moving (prevents ghosts drifting off-map)
     const a=this.act(p);if(a)this.dir=a;
     // Validate move target before committing
     const nx=wx(this.x+this.dir.x),ny=this.y+this.dir.y;
-    if(ny>=0&&ny<R&&(gok(nx,ny,this.mode,this.eat)||this.mode==='house')){this.x=nx;this.y=ny;}
+    if(ny>=0&&ny<R&&gok(nx,ny,this.mode,this.eat)){this.x=nx;this.y=ny;}
     if(this.eat&&this.x===14&&this.y===14){this.eat=false;this.fr=false;this.mode=isScat?'scatter':'chase';this.spd=diff.gSpd;}
   }
 }
