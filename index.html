@@ -215,7 +215,7 @@ const GST=[{x:14,y:11},{x:14,y:14},{x:12,y:14},{x:16,y:14}];
 const GSCAT=[{x:25,y:0},{x:2,y:0},{x:27,y:30},{x:0,y:30}];
 class Ghost{
   constructor(nm,i){this.nm=nm;this.i=i;this.col=GC[i];this.sx=GST[i].x;this.sy=GST[i].y;this.scat=GSCAT[i];this.pers=['approach_behind','approach_ahead','direct','wander_biased'][i];this.ql=new QL(nm);this.reset();}
-  reset(){this.x=this.sx;this.y=this.sy;this.dir={x:0,y:-1};this.mp=0;this.spd=diff.gSpd;this.mode=this.i===0?'scatter':'house';this.fr=false;this.eat=false;this.rt=this.i*80;this.role=null;this.pdist=0;}
+  reset(){this.x=this.sx;this.y=this.sy;this.dir=this.i===0?{x:-1,y:0}:{x:0,y:0};this.mp=0;this.spd=diff.gSpd;this.mode=this.i===0?'scatter':'house';this.fr=false;this.eat=false;this.rt=this.i*80;this.role=null;this.pdist=0;}
   costFn(px,py,pd){
     const mo=new Set(),fr=new Set(),bh=new Set();
     for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;mo.add(`${wx(px+dx)},${py+dy}`);}
@@ -236,7 +236,7 @@ class Ghost{
     switch(this.i){case 0:return pr||{x:p.x,y:p.y};case 1:return{x:p.x+p.dir.x*4,y:p.y+p.dir.y*4};case 2:const b=ghosts[0];const ax=p.x+p.dir.x*2,ay=p.y+p.dir.y*2;return{x:ax+(ax-b.x),y:ay+(ay-b.y)};case 3:return Math.abs(this.x-p.x)+Math.abs(this.y-p.y)>8?{x:p.x,y:p.y}:this.scat;default:return{x:p.x,y:p.y};}
   }
   act(p){
-    if(this.mode==='house'){this.rt--;if(this.rt<=0){this.mode=isScat?'scatter':'chase';this.x=14;this.y=11;this.dir={x:-1,y:0};}return null;}
+    if(this.mode==='house'){this.rt--;if(this.rt<=0){this.mode=isScat?'scatter':'chase';this.x=14;this.y=11;this.dir={x:-1,y:0};this.mp=0;}return null;}
     const opp={x:-this.dir.x,y:-this.dir.y};const va=[];
     for(let i=0;i<4;i++){const d=DIRS[i];if(d.x===opp.x&&d.y===opp.y)continue;if(gok(wx(this.x+d.x),this.y+d.y,this.mode,this.eat))va.push(i);}
     if(!va.length)return this.dir;
@@ -252,9 +252,12 @@ class Ghost{
   }
   step(p){
     const sm=this.fr?.45:this.eat?1.6:1;this.mp+=this.spd*sm;if(this.mp<1)return;this.mp=0;
-    this.x=wx(this.x+this.dir.x);this.y+=this.dir.y;
-    if(this.eat&&this.x===14&&this.y===14){this.eat=false;this.fr=false;this.mode=isScat?'scatter':'chase';this.spd=diff.gSpd;}
+    // Decide direction BEFORE moving (prevents ghosts drifting off-map)
     const a=this.act(p);if(a)this.dir=a;
+    // Validate move target before committing
+    const nx=wx(this.x+this.dir.x),ny=this.y+this.dir.y;
+    if(ny>=0&&ny<R&&(gok(nx,ny,this.mode,this.eat)||this.mode==='house')){this.x=nx;this.y=ny;}
+    if(this.eat&&this.x===14&&this.y===14){this.eat=false;this.fr=false;this.mode=isScat?'scatter':'chase';this.spd=diff.gSpd;}
   }
 }
 let ghosts=GN.map((n,i)=>new Ghost(n,i));
