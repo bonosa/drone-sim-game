@@ -68,10 +68,12 @@ canvas{display:block;width:100%;height:100%}
       </div>
       <div id="diff-desc" class="diff-desc">Slow ghosts · No A* · Long power-ups · 5 lives</div>
     </div>
-    <div class="start-hint">TAP HERE TO START</div>
+    <div class="start-hint" id="start-play">▶ PLAY</div>
+    <div class="start-hint" id="start-watch" style="margin-top:8px;border-color:#0ff;color:#0ff">🤖 WATCH AI</div>
   </div>
   <div id="ready-text">READY!</div>
   <div id="difficulty-badge">EASY</div>
+  <div id="ai-mode-badge" style="position:absolute;top:8px;left:8px;font-size:7px;color:#0ff;padding:3px 8px;border-radius:3px;z-index:5;display:none;background:#003;border:1px solid #0ff;font-family:'Press Start 2P',monospace;animation:blink 1.5s step-end infinite">🤖 AI</div>
 </div>
 <div id="ai-panel">
   <div class="ai-title">🧠 AI AGENT STATUS</div>
@@ -217,6 +219,101 @@ function pacStep(){
   return false;
 }
 
+// ==== PAC-MAN AI AUTOPILOT ====
+// BFS to find nearest pellets, ghost danger avoidance, power pellet strategy
+let aiMode=false; // false=human plays, true=AI plays
+
+const pacAI={
+  // BFS: find path to nearest target tile, avoiding ghost danger zones
+  bfs(startX, startY, targetFn, dangerMap){
+    const visited=new Set();
+    const queue=[{x:startX,y:startY,firstDir:null,dist:0}];
+    visited.add(`${startX},${startY}`);
+    while(queue.length>0){
+      const cur=queue.shift();
+      // Check if this tile is a target
+      if(cur.dist>0 && targetFn(cur.x,cur.y)){
+        return cur.firstDir; // return the first step direction
+      }
+      if(cur.dist>40)continue; // don't search too far
+      for(const d of DIRS){
+        const nx=wx(cur.x+d.x),ny=cur.y+d.y;
+        if(ny<0||ny>=R)continue;
+        if(!ok(nx,ny))continue;
+        if(map[ny]&&map[ny][nx]===4)continue; // skip ghost gate
+        const k=`${nx},${ny}`;
+        if(visited.has(k))continue;
+        // Skip tiles near ghosts (danger zones) unless we're frightening them
+        const danger=dangerMap?dangerMap[k]||0:0;
+        if(danger>0 && cur.dist<danger)continue; // too close to ghost
+        visited.add(k);
+        queue.push({x:nx,y:ny,firstDir:cur.firstDir||{...d},dist:cur.dist+1});
+      }
+    }
+    return null;
+  },
+
+  // Build danger map: tiles near non-frightened ghosts are dangerous
+  buildDangerMap(){
+    const dm={};
+    ghosts.forEach(g=>{
+      if(g.mode==='house'||g.eat)return;
+      if(g.fr)return; // frightened ghosts are targets, not threats
+      // Mark tiles within radius as dangerous
+      const radius=4;
+      for(let dy=-radius;dy<=radius;dy++){
+        for(let dx=-radius;dx<=radius;dx++){
+          const dist=Math.abs(dx)+Math.abs(dy);
+          if(dist>radius)continue;
+          const nx=wx(g.x+dx),ny=g.y+dy;
+          if(ny>=0&&ny<R){
+            const k=`${nx},${ny}`;
+            dm[k]=Math.max(dm[k]||0, radius-dist+1);
+          }
+        }
+      }
+    });
+    return dm;
+  },
+
+  // Decide Pac-Man's next direction
+  think(){
+    const dm=this.buildDangerMap();
+    const anyFrightened=ghosts.some(g=>g.fr&&!g.eat&&g.mode!=='house');
+    const frightTimeLeft=frightT;
+
+    // Priority 1: If ghosts are frightened, hunt them!
+    if(anyFrightened && frightTimeLeft>60){
+      const huntDir=this.bfs(pac.x,pac.y,(x,y)=>{
+        return ghosts.some(g=>g.fr&&!g.eat&&g.mode!=='house'&&g.x===x&&g.y===y);
+      }, null); // no danger avoidance when hunting
+      if(huntDir)return huntDir;
+    }
+
+    // Priority 2: If near a power pellet and ghosts are close, grab it
+    const nearestGhostDist=Math.min(...ghosts.filter(g=>g.mode!=='house'&&!g.eat&&!g.fr).map(g=>Math.abs(g.x-pac.x)+Math.abs(g.y-pac.y)));
+    if(nearestGhostDist<8){
+      const pelletDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&map[y][x]===3, null);
+      if(pelletDir)return pelletDir;
+    }
+
+    // Priority 3: Eat nearest dot, avoiding ghosts
+    const dotDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&(map[y][x]===2||map[y][x]===3), dm);
+    if(dotDir)return dotDir;
+
+    // Priority 4: If danger-avoidance blocked all paths, try without it
+    const anyDotDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&(map[y][x]===2||map[y][x]===3), null);
+    if(anyDotDir)return anyDotDir;
+
+    // Fallback: move in any valid direction
+    for(const d of DIRS){
+      const nx=wx(pac.x+d.x),ny=pac.y+d.y;
+      if(ok(nx,ny)&&(ny<0||ny>=R||map[ny][nx]!==4))return d;
+    }
+    return{x:0,y:0};
+  }
+};
+
 // ==== GHOST AGENT ====
 const GN=['blinky','pinky','inky','clyde'],GC=['#FF0000','#FFB8FF','#00FFFF','#FFB852'];
 const GST=[{x:14,y:11},{x:14,y:14},{x:12,y:14},{x:16,y:14}];
@@ -297,15 +394,13 @@ let inQ=[];
 let activeDir=null; // currently held d-pad direction (for mobile)
 function setDir(dx,dy){inQ=[{x:dx,y:dy}];}
 document.addEventListener('keydown',e=>{ensureAudio();
-  if(gs==='menu'||gs==='gameover'||gs==='win'){if(e.key==='Enter'||e.key===' '){startGame();e.preventDefault();return;}}
+  if(gs==='menu'||gs==='gameover'||gs==='win'){if(e.key==='Enter'||e.key===' '){aiMode=false;startGame();e.preventDefault();return;}}
   let d=null;
   switch(e.key){case'ArrowUp':case'w':case'W':d={x:0,y:-1};break;case'ArrowDown':case's':case'S':d={x:0,y:1};break;case'ArrowLeft':case'a':case'A':d={x:-1,y:0};break;case'ArrowRight':case'd':case'D':d={x:1,y:0};break;default:return;}
   e.preventDefault();
   inQ=[d];
 });
-document.getElementById('overlay').addEventListener('click',e=>{ensureAudio();if(e.target.classList.contains('diff-btn'))return;if(gs==='menu'||gs==='gameover'||gs==='win')startGame();});
-document.getElementById('overlay').addEventListener('touchend',e=>{ensureAudio();if(e.target.classList.contains('diff-btn'))return;if(gs==='menu'||gs==='gameover'||gs==='win'){e.preventDefault();startGame();}});
-document.getElementById('game-container').addEventListener('touchend',e=>{ensureAudio();if(gs==='menu'||gs==='gameover'||gs==='win'){e.preventDefault();startGame();}});
+document.getElementById('game-container').addEventListener('touchend',e=>{ensureAudio();});
 document.querySelectorAll('.diff-btn').forEach(b=>{b.addEventListener('click',e=>{e.stopPropagation();document.querySelectorAll('.diff-btn').forEach(b2=>b2.classList.remove('selected'));b.classList.add('selected');selDiff=b.dataset.diff;document.getElementById('diff-desc').textContent=PRE[selDiff].desc;});
 b.addEventListener('touchend',e=>{e.stopPropagation();e.preventDefault();document.querySelectorAll('.diff-btn').forEach(b2=>b2.classList.remove('selected'));b.classList.add('selected');selDiff=b.dataset.diff;document.getElementById('diff-desc').textContent=PRE[selDiff].desc;});});
 
@@ -338,7 +433,11 @@ Object.entries(dpadMap).forEach(([id,d])=>{
 });
 
 // ==== GAME MGT ====
-function showOv(t,h){const o=document.getElementById('overlay');o.classList.remove('hidden');o.querySelector('h1').textContent=t;o.querySelector('.start-hint').textContent=h;document.getElementById('diff-select').style.display='block';}
+function showOv(t,h){const o=document.getElementById('overlay');o.classList.remove('hidden');o.querySelector('h1').textContent=t;document.getElementById('start-play').textContent=h.includes('NEXT')?'▶ NEXT LEVEL':'▶ PLAY';document.getElementById('start-watch').style.display=h.includes('NEXT')?'none':'block';document.getElementById('diff-select').style.display='block';}
+document.getElementById('start-play').addEventListener('click',e=>{e.stopPropagation();ensureAudio();aiMode=false;startGame();});
+document.getElementById('start-play').addEventListener('touchend',e=>{e.preventDefault();e.stopPropagation();ensureAudio();aiMode=false;startGame();});
+document.getElementById('start-watch').addEventListener('click',e=>{e.stopPropagation();ensureAudio();aiMode=true;startGame();});
+document.getElementById('start-watch').addEventListener('touchend',e=>{e.preventDefault();e.stopPropagation();ensureAudio();aiMode=true;startGame();});
 function startGame(){
   const p=PRE[selDiff];score=0;lives=p.lives;level=1;
   initMap();resetPac();const qb=ghosts.map(g=>g.ql);resetGhosts();ghosts.forEach((g,i)=>{g.ql=qb[i];g.spd=p.gSpd;g.ql.eps=Math.max(g.ql.me,p.qEps);});
@@ -350,6 +449,7 @@ function startGame(){
   else{b.textContent='HARD';b.style.background='#f44';b.style.color='#fff';}
   scIdx=0;scT=0;isScat=true;pm.reset();
   document.getElementById('overlay').classList.add('hidden');document.getElementById('ai-panel').classList.add('active');document.getElementById('difficulty-badge').style.display='block';
+  document.getElementById('ai-mode-badge').style.display=aiMode?'block':'none';
   gs='ready';readyT=90;document.getElementById('ready-text').style.display='block';updateUI();sndStart();
 }
 
@@ -360,9 +460,19 @@ function update(){
   if(gs==='dying')return;
   if(gs!=='playing')return;
   af++;diff.surv++;
-  if(inQ.length){pacInput(inQ[0]);inQ=[];}
-  // Mobile d-pad hold: keep re-sending direction while finger is down
-  if(activeDir&&!inQ.length)pacInput(activeDir);
+  // AI autopilot or human input
+  if(aiMode){
+    // AI thinks every time pac is about to move (at tile boundaries)
+    if(pac.tick+1>=PAC_TICK||pac.dir.x===0&&pac.dir.y===0){
+      const aiDir=pacAI.think();
+      if(aiDir)pacInput(aiDir);
+    }
+    // Human can take over anytime by pressing a direction
+    if(inQ.length){aiMode=false;pacInput(inQ[0]);inQ=[];document.getElementById('ai-mode-badge').style.display='none';}
+  } else {
+    if(inQ.length){pacInput(inQ[0]);inQ=[];}
+    if(activeDir&&!inQ.length)pacInput(activeDir);
+  }
   const moved=pacStep();
   if(moved){
     if(pac.x!==lpp.x||pac.y!==lpp.y){pm.rec(pac.x,pac.y,pac.dir);lpp={x:pac.x,y:pac.y};}
