@@ -146,14 +146,14 @@ document.getElementById('high-score').textContent=hi;
 
 // ==== PRESETS ====
 const PRE={
-  easy:{lives:5,gSpd:.045,frightD:600,astar:false,coop:false,pred:0,qEps:.35,startLvl:.5,desc:'Slow ghosts · No A* · Long power-ups · 5 lives'},
-  medium:{lives:3,gSpd:.055,frightD:400,astar:true,coop:false,pred:2,qEps:.15,startLvl:1.2,desc:'A* pathfinding · Pattern prediction · 3 lives'},
-  hard:{lives:2,gSpd:.068,frightD:200,astar:true,coop:true,pred:5,qEps:.05,startLvl:2.2,desc:'Fast A* · Full coop · Q-exploit · 2 lives'}
+  easy:{lives:5,gSpd:.10,frightD:600,astar:false,coop:false,pred:0,qEps:.35,startLvl:.5,desc:'Matched speed · No A* · Long power-ups · 5 lives'},
+  medium:{lives:3,gSpd:.11,frightD:400,astar:true,coop:false,pred:2,qEps:.15,startLvl:1.2,desc:'Slightly faster ghosts · A* · 3 lives'},
+  hard:{lives:2,gSpd:.125,frightD:200,astar:true,coop:true,pred:5,qEps:.05,startLvl:2.2,desc:'Same speed · Full A* · Q-exploit · 2 lives'}
 };
 
 // ==== DIFFICULTY ====
-const diff={level:1,gSpd:.045,frightD:600,astar:false,coop:false,pred:0,deaths:0,gKills:0,dpl:[],surv:0,
-  upd(){const p=PRE[selDiff]||PRE.easy;const kr=this.gKills/Math.max(1,this.deaths+this.gKills);const avg=this.dpl.length?this.dpl.reduce((a,b)=>a+b)/this.dpl.length:0;const dr=avg/Math.max(totalDots,1);const perf=kr*.3+dr*.5+Math.min(this.surv/3000,1)*.2;this.level=Math.max(p.startLvl,Math.min(3,.5+perf*2.5));this.gSpd=Math.max(p.gSpd,.04+this.level*.01);this.frightD=Math.min(p.frightD,Math.max(120,540-this.level*120));this.astar=p.astar||this.level>=1;this.coop=p.coop||this.level>=1.5;this.pred=Math.max(p.pred,Math.floor(this.level*3));const b=document.getElementById('difficulty-badge');if(this.level<1){b.textContent='EASY';b.style.background='#0f0';b.style.color='#000';}else if(this.level<1.5){b.textContent='MEDIUM';b.style.background='#FFD700';b.style.color='#000';}else if(this.level<2.2){b.textContent='HARD';b.style.background='#f80';b.style.color='#000';}else{b.textContent='BRUTAL';b.style.background='#f00';b.style.color='#fff';}},
+const diff={level:1,gSpd:.10,frightD:600,astar:false,coop:false,pred:0,deaths:0,gKills:0,dpl:[],surv:0,
+  upd(){const p=PRE[selDiff]||PRE.easy;const kr=this.gKills/Math.max(1,this.deaths+this.gKills);const avg=this.dpl.length?this.dpl.reduce((a,b)=>a+b)/this.dpl.length:0;const dr=avg/Math.max(totalDots,1);const perf=kr*.3+dr*.5+Math.min(this.surv/3000,1)*.2;this.level=Math.max(p.startLvl,Math.min(3,.5+perf*2.5));this.gSpd=Math.max(p.gSpd,.09+this.level*.015);this.frightD=Math.min(p.frightD,Math.max(120,540-this.level*120));this.astar=p.astar||this.level>=1;this.coop=p.coop||this.level>=1.5;this.pred=Math.max(p.pred,Math.floor(this.level*3));const b=document.getElementById('difficulty-badge');if(this.level<1){b.textContent='EASY';b.style.background='#0f0';b.style.color='#000';}else if(this.level<1.5){b.textContent='MEDIUM';b.style.background='#FFD700';b.style.color='#000';}else if(this.level<2.2){b.textContent='HARD';b.style.background='#f80';b.style.color='#000';}else{b.textContent='BRUTAL';b.style.background='#f00';b.style.color='#fff';}},
   die(){this.deaths++;this.dpl.push(dotsEaten);if(this.dpl.length>5)this.dpl.shift();this.upd();},
   kill(){this.gKills++;this.upd();},
   reset(){this.deaths=0;this.gKills=0;this.dpl=[];this.surv=0;}
@@ -192,7 +192,7 @@ class QL{
 // ==== PAC-MAN: CONTINUOUS MOVEMENT ====
 // Like real Pac-Man: always moving. Press a direction to steer.
 // Buffered input (15 frames) so you never miss a turn.
-const PAC_TICK=5; // frames per tile — lower=faster
+const PAC_TICK=8; // frames per tile — pac moves ~7.5 tiles/sec at 60fps
 let pac={x:14,y:23,dir:{x:0,y:0},want:{x:-1,y:0},buf:null,bufT:0,tick:0,ma:0,mo:true};
 function resetPac(){pac={x:14,y:23,dir:{x:0,y:0},want:{x:-1,y:0},buf:null,bufT:0,tick:0,ma:0,mo:true};}
 function pacInput(d){
