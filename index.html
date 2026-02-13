@@ -434,19 +434,33 @@ Object.entries(dpadMap).forEach(([id,d])=>{
 
 // ==== GAME MGT ====
 function showOv(t,h){const o=document.getElementById('overlay');o.classList.remove('hidden');o.querySelector('h1').textContent=t;document.getElementById('start-play').textContent=h.includes('NEXT')?'▶ NEXT LEVEL':'▶ PLAY';document.getElementById('start-watch').style.display=h.includes('NEXT')?'none':'block';document.getElementById('diff-select').style.display='block';}
-document.getElementById('start-play').addEventListener('click',e=>{e.stopPropagation();ensureAudio();aiMode=false;startGame();});
-document.getElementById('start-play').addEventListener('touchend',e=>{e.preventDefault();e.stopPropagation();ensureAudio();aiMode=false;startGame();});
-document.getElementById('start-watch').addEventListener('click',e=>{e.stopPropagation();ensureAudio();aiMode=true;startGame();});
-document.getElementById('start-watch').addEventListener('touchend',e=>{e.preventDefault();e.stopPropagation();ensureAudio();aiMode=true;startGame();});
+
+// Prevent double-fire from touch+click
+let startLock=false;
+function doStart(ai){
+  if(startLock)return;startLock=true;setTimeout(()=>startLock=false,300);
+  ensureAudio();aiMode=ai;startGame();
+}
+document.getElementById('start-play').addEventListener('click',e=>{e.stopPropagation();doStart(false);});
+document.getElementById('start-play').addEventListener('touchend',e=>{e.preventDefault();e.stopPropagation();doStart(false);},{passive:false});
+document.getElementById('start-watch').addEventListener('click',e=>{e.stopPropagation();doStart(true);});
+document.getElementById('start-watch').addEventListener('touchend',e=>{e.preventDefault();e.stopPropagation();doStart(true);},{passive:false});
 function startGame(){
   const p=PRE[selDiff];score=0;lives=p.lives;level=1;
-  initMap();resetPac();const qb=ghosts.map(g=>g.ql);resetGhosts();ghosts.forEach((g,i)=>{g.ql=qb[i];g.spd=p.gSpd;g.ql.eps=Math.max(g.ql.me,p.qEps);});
-  diff.gSpd=p.gSpd;diff.frightD=p.frightD;diff.astar=p.astar;diff.coop=p.coop;diff.pred=p.pred;diff.reset();diff.level=p.startLvl;diff.upd();
-  // Force badge to match selected preset (upd() may overshoot due to adaptive formula)
+  initMap();resetPac();
+  // Clear stale Q-tables to prevent ghosts from having bad learned habits
+  ghosts.forEach(g=>{try{localStorage.removeItem(`pq4_${g.nm}`);}catch(e){}});
+  const qb=ghosts.map(g=>new QL(g.nm)); // fresh Q-brains
+  resetGhosts();ghosts.forEach((g,i)=>{g.ql=qb[i];g.spd=p.gSpd;g.ql.eps=Math.max(g.ql.me,p.qEps);});
+  // Set difficulty from preset — don't let upd() override speeds
+  diff.gSpd=p.gSpd;diff.frightD=p.frightD;diff.astar=p.astar;diff.coop=p.coop;diff.pred=p.pred;diff.reset();diff.level=p.startLvl;
+  // Force badge to match selected preset
   const b=document.getElementById('difficulty-badge');
   if(selDiff==='easy'){b.textContent='EASY';b.style.background='#0f0';b.style.color='#000';}
   else if(selDiff==='medium'){b.textContent='MEDIUM';b.style.background='#FFD700';b.style.color='#000';}
   else{b.textContent='HARD';b.style.background='#f44';b.style.color='#fff';}
+  // Ensure ghost speed is from preset (not from adaptive formula)
+  ghosts.forEach(g=>{g.spd=p.gSpd;});
   scIdx=0;scT=0;isScat=true;pm.reset();
   document.getElementById('overlay').classList.add('hidden');document.getElementById('ai-panel').classList.add('active');document.getElementById('difficulty-badge').style.display='block';
   document.getElementById('ai-mode-badge').style.display=aiMode?'block':'none';
