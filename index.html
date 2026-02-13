@@ -169,43 +169,33 @@ class QL{
   stats(){return{st:Object.keys(this.qt).length,nu:this.nu};}
 }
 
-// ==== PAC-MAN: TAP-TO-MOVE ====
-// Each key press queues exactly 1 tile of movement.
-// Press again (or hold) for another tile. You stop between tiles.
-const PAC_TICK=7; // frames to animate crossing 1 tile
-let pac={x:14,y:23,dir:{x:0,y:0},want:{x:-1,y:0},tick:0,moving:false,ma:0,mo:true,pendingMove:false};
-function resetPac(){pac={x:14,y:23,dir:{x:0,y:0},want:{x:-1,y:0},tick:0,moving:false,ma:0,mo:true,pendingMove:false};}
+// ==== PAC-MAN: CONTINUOUS MOVEMENT ====
+// Like real Pac-Man: always moving. Press a direction to steer.
+// Buffered input (15 frames) so you never miss a turn.
+const PAC_TICK=5; // frames per tile — lower=faster
+let pac={x:14,y:23,dir:{x:0,y:0},want:{x:-1,y:0},buf:null,bufT:0,tick:0,ma:0,mo:true};
+function resetPac(){pac={x:14,y:23,dir:{x:0,y:0},want:{x:-1,y:0},buf:null,bufT:0,tick:0,ma:0,mo:true};}
 function pacInput(d){
-  pac.want={...d};
-  pac.pendingMove=true; // queue 1 tile
+  // Can we turn immediately?
+  const nx=wx(pac.x+d.x),ny=pac.y+d.y;
+  if(ok(nx,ny)&&(ny<0||ny>=R||map[ny][nx]!==4)){pac.want={...d};pac.buf=null;pac.bufT=0;}
+  else{pac.buf={...d};pac.bufT=15;} // buffer for 15 frames
 }
 function pacStep(){
-  // If we have a pending move and are not mid-tile
-  if(pac.pendingMove&&!pac.moving){
-    // Try wanted direction
-    let nx=wx(pac.x+pac.want.x),ny=pac.y+pac.want.y;
-    if(ok(nx,ny)&&(ny<0||ny>=R||map[ny][nx]!==4)){
-      pac.dir={...pac.want};
-      pac.moving=true;pac.tick=0;pac.pendingMove=false;
-    } else {
-      // Can't go wanted dir — try current dir
-      nx=wx(pac.x+pac.dir.x);ny=pac.y+pac.dir.y;
-      if(pac.dir.x===0&&pac.dir.y===0){pac.pendingMove=false;return false;}
-      if(ok(nx,ny)&&(ny<0||ny>=R||map[ny][nx]!==4)){
-        pac.moving=true;pac.tick=0;pac.pendingMove=false;
-      } else {
-        pac.pendingMove=false;return false; // blocked
-      }
-    }
+  // Try buffered input every frame
+  if(pac.buf&&pac.bufT>0){
+    pac.bufT--;
+    const nx=wx(pac.x+pac.buf.x),ny=pac.y+pac.buf.y;
+    if(ok(nx,ny)&&(ny<0||ny>=R||map[ny][nx]!==4)){pac.want={...pac.buf};pac.buf=null;pac.bufT=0;}
   }
-  if(!pac.moving)return false;
-  pac.tick++;
-  if(pac.tick>=PAC_TICK){
-    // Complete the 1-tile move
-    pac.x=wx(pac.x+pac.dir.x);pac.y=pac.y+pac.dir.y;
-    pac.moving=false;pac.tick=0;
-    return true; // moved 1 tile
-  }
+  if(pac.bufT<=0)pac.buf=null;
+  pac.tick++;if(pac.tick<PAC_TICK)return false;pac.tick=0;
+  // Try wanted direction
+  let nx=wx(pac.x+pac.want.x),ny=pac.y+pac.want.y;
+  if(ok(nx,ny)&&(ny<0||ny>=R||map[ny][nx]!==4))pac.dir={...pac.want};
+  // Move in current direction
+  nx=wx(pac.x+pac.dir.x);ny=pac.y+pac.dir.y;
+  if(ok(nx,ny)&&(ny<0||ny>=R||map[ny][nx]!==4)){pac.x=nx;pac.y=ny;return true;}
   return false;
 }
 
@@ -286,20 +276,14 @@ function collide(){
 
 // ==== INPUT ====
 let inQ=[];
-let heldKey=null; // track held key for repeat
+let activeDir=null; // currently held d-pad direction (for mobile)
 function setDir(dx,dy){inQ=[{x:dx,y:dy}];}
 document.addEventListener('keydown',e=>{ensureAudio();
   if(gs==='menu'||gs==='gameover'||gs==='win'){if(e.key==='Enter'||e.key===' '){startGame();e.preventDefault();return;}}
-  if(e.repeat)return; // CRITICAL: ignore browser auto-repeat
   let d=null;
   switch(e.key){case'ArrowUp':case'w':case'W':d={x:0,y:-1};break;case'ArrowDown':case's':case'S':d={x:0,y:1};break;case'ArrowLeft':case'a':case'A':d={x:-1,y:0};break;case'ArrowRight':case'd':case'D':d={x:1,y:0};break;default:return;}
   e.preventDefault();
   inQ=[d];
-  heldKey=e.key;
-});
-document.addEventListener('keyup',e=>{
-  // Stop repeating when key released
-  if(e.key===heldKey)heldKey=null;
 });
 document.getElementById('overlay').addEventListener('click',e=>{ensureAudio();if(e.target.classList.contains('diff-btn'))return;if(gs==='menu'||gs==='gameover'||gs==='win')startGame();});
 document.getElementById('overlay').addEventListener('touchend',e=>{ensureAudio();if(e.target.classList.contains('diff-btn'))return;if(gs==='menu'||gs==='gameover'||gs==='win'){e.preventDefault();startGame();}});
@@ -307,7 +291,7 @@ document.getElementById('game-container').addEventListener('touchend',e=>{ensure
 document.querySelectorAll('.diff-btn').forEach(b=>{b.addEventListener('click',e=>{e.stopPropagation();document.querySelectorAll('.diff-btn').forEach(b2=>b2.classList.remove('selected'));b.classList.add('selected');selDiff=b.dataset.diff;document.getElementById('diff-desc').textContent=PRE[selDiff].desc;});
 b.addEventListener('touchend',e=>{e.stopPropagation();e.preventDefault();document.querySelectorAll('.diff-btn').forEach(b2=>b2.classList.remove('selected'));b.classList.add('selected');selDiff=b.dataset.diff;document.getElementById('diff-desc').textContent=PRE[selDiff].desc;});});
 
-// D-pad: use touchstart (instant, no 300ms delay) + click fallback for desktop
+// D-pad: touchstart sets direction continuously, touchend clears
 const dpadMap={
   'btn-up':{x:0,y:-1},'btn-down':{x:0,y:1},
   'btn-left':{x:-1,y:0},'btn-right':{x:1,y:0}
@@ -318,11 +302,21 @@ Object.entries(dpadMap).forEach(([id,d])=>{
   el.addEventListener('touchstart',e=>{
     e.preventDefault();e.stopPropagation();
     ensureAudio();touched=true;
-    setDir(d.x,d.y);
+    activeDir={...d}; // hold this direction
+    inQ=[d];
   },{passive:false});
-  el.addEventListener('touchend',e=>{e.preventDefault();e.stopPropagation();},{passive:false});
+  el.addEventListener('touchend',e=>{
+    e.preventDefault();e.stopPropagation();
+    // Only clear if this was the active direction
+    if(activeDir&&activeDir.x===d.x&&activeDir.y===d.y)activeDir=null;
+  },{passive:false});
+  el.addEventListener('touchcancel',e=>{
+    if(activeDir&&activeDir.x===d.x&&activeDir.y===d.y)activeDir=null;
+  });
   el.addEventListener('click',e=>{
-    if(touched){touched=false;return;} // skip if already handled by touch
+    if(touched){touched=false;return;}
+    ensureAudio();inQ=[d];
+  });
     ensureAudio();setDir(d.x,d.y);
   });
 });
@@ -350,17 +344,9 @@ function update(){
   if(gs==='dying')return;
   if(gs!=='playing')return;
   af++;diff.surv++;
-  if(inQ.length){pacInput(inQ[0]);inQ=[];pac.holdWait=12;} // reset hold delay on new press
-  // Held key: only re-queue after a delay so tap=1 tile
-  if(heldKey&&!pac.moving&&!pac.pendingMove){
-    if(!pac.holdWait)pac.holdWait=0;
-    if(pac.holdWait>0){pac.holdWait--;}
-    else{
-      let d=null;
-      switch(heldKey){case'ArrowUp':case'w':case'W':d={x:0,y:-1};break;case'ArrowDown':case's':case'S':d={x:0,y:1};break;case'ArrowLeft':case'a':case'A':d={x:-1,y:0};break;case'ArrowRight':case'd':case'D':d={x:1,y:0};break;}
-      if(d)pacInput(d);
-    }
-  }
+  if(inQ.length){pacInput(inQ[0]);inQ=[];}
+  // Mobile d-pad hold: keep re-sending direction while finger is down
+  if(activeDir&&!inQ.length)pacInput(activeDir);
   const moved=pacStep();
   if(moved){
     if(pac.x!==lpp.x||pac.y!==lpp.y){pm.rec(pac.x,pac.y,pac.dir);lpp={x:pac.x,y:pac.y};}
