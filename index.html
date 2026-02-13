@@ -153,7 +153,29 @@ const PRE={
 
 // ==== DIFFICULTY ====
 const diff={level:1,gSpd:.10,frightD:600,astar:false,coop:false,pred:0,deaths:0,gKills:0,dpl:[],surv:0,
-  upd(){const p=PRE[selDiff]||PRE.easy;const kr=this.gKills/Math.max(1,this.deaths+this.gKills);const avg=this.dpl.length?this.dpl.reduce((a,b)=>a+b)/this.dpl.length:0;const dr=avg/Math.max(totalDots,1);const perf=kr*.3+dr*.5+Math.min(this.surv/3000,1)*.2;this.level=Math.max(p.startLvl,Math.min(3,.5+perf*2.5));this.gSpd=Math.max(p.gSpd,.09+this.level*.015);this.frightD=Math.min(p.frightD,Math.max(120,540-this.level*120));this.astar=p.astar||this.level>=1;this.coop=p.coop||this.level>=1.5;this.pred=Math.max(p.pred,Math.floor(this.level*3));const b=document.getElementById('difficulty-badge');if(this.level<1){b.textContent='EASY';b.style.background='#0f0';b.style.color='#000';}else if(this.level<1.5){b.textContent='MEDIUM';b.style.background='#FFD700';b.style.color='#000';}else if(this.level<2.2){b.textContent='HARD';b.style.background='#f80';b.style.color='#000';}else{b.textContent='BRUTAL';b.style.background='#f00';b.style.color='#fff';}},
+  upd(){
+    const p=PRE[selDiff]||PRE.easy;
+    // Adaptive difficulty ONLY scales within the preset's bounds
+    const kr=this.gKills/Math.max(1,this.deaths+this.gKills);
+    const avg=this.dpl.length?this.dpl.reduce((a,b)=>a+b)/this.dpl.length:0;
+    const dr=avg/Math.max(totalDots,1);
+    const perf=kr*.3+dr*.5+Math.min(this.surv/3000,1)*.2;
+    // Level can only go up to the NEXT preset's threshold, not beyond
+    const maxLevel=selDiff==='easy'?0.99:selDiff==='medium'?1.99:3.0;
+    this.level=Math.max(p.startLvl,Math.min(maxLevel,p.startLvl+perf*0.5));
+    // Speed scales slightly within preset, never beyond preset base
+    this.gSpd=p.gSpd+perf*0.01;
+    // These features ONLY activate if the preset says so
+    this.frightD=p.frightD;
+    this.astar=p.astar;
+    this.coop=p.coop;
+    this.pred=p.pred;
+    // Badge always matches selected preset
+    const b=document.getElementById('difficulty-badge');
+    if(selDiff==='easy'){b.textContent='EASY';b.style.background='#0f0';b.style.color='#000';}
+    else if(selDiff==='medium'){b.textContent='MEDIUM';b.style.background='#FFD700';b.style.color='#000';}
+    else{b.textContent='HARD';b.style.background='#f44';b.style.color='#fff';}
+  },
   die(){this.deaths++;this.dpl.push(dotsEaten);if(this.dpl.length>5)this.dpl.shift();this.upd();},
   kill(){this.gKills++;this.upd();},
   reset(){this.deaths=0;this.gKills=0;this.dpl=[];this.surv=0;}
@@ -279,29 +301,66 @@ const pacAI={
   // Decide Pac-Man's next direction
   think(){
     const dm=this.buildDangerMap();
-    const anyFrightened=ghosts.some(g=>g.fr&&!g.eat&&g.mode!=='house');
-    const frightTimeLeft=frightT;
+    const activeGhosts=ghosts.filter(g=>g.mode!=='house'&&!g.eat);
+    const dangerousGhosts=activeGhosts.filter(g=>!g.fr);
+    const blueGhosts=activeGhosts.filter(g=>g.fr);
+    const anyBlue=blueGhosts.length>0;
+    const nearestDangerDist=dangerousGhosts.length?Math.min(...dangerousGhosts.map(g=>Math.abs(g.x-pac.x)+Math.abs(g.y-pac.y))):99;
 
-    // Priority 1: If ghosts are frightened, hunt them!
-    if(anyFrightened && frightTimeLeft>60){
+    // === POWER PELLET TRAP STRATEGY ===
+    // Find nearest power pellet and distance to it
+    let nearestPelletDist=99, nearestPelletDir=null;
+    for(let r=0;r<R;r++)for(let c=0;c<C;c++){
+      if(map[r]&&map[r][c]===3){
+        const d2=Math.abs(c-pac.x)+Math.abs(r-pac.y);
+        if(d2<nearestPelletDist){nearestPelletDist=d2;nearestPelletDir=this.bfs(pac.x,pac.y,(x,y)=>x===c&&y===r,null);}
+      }
+    }
+
+    // Priority 1: Hunt frightened ghosts — but pace yourself
+    if(anyBlue && frightT>40){
+      // Find nearest blue ghost
       const huntDir=this.bfs(pac.x,pac.y,(x,y)=>{
-        return ghosts.some(g=>g.fr&&!g.eat&&g.mode!=='house'&&g.x===x&&g.y===y);
-      }, null); // no danger avoidance when hunting
-      if(huntDir)return huntDir;
+        return blueGhosts.some(g=>g.x===x&&g.y===y);
+      }, null);
+      if(huntDir){
+        // Slow down pac-man during chase so we don't overshoot
+        // Skip every other move by returning null sometimes
+        if(frightT>200 && blueGhosts.length>0){
+          const nearestBlue=Math.min(...blueGhosts.map(g=>Math.abs(g.x-pac.x)+Math.abs(g.y-pac.y)));
+          // If blue ghost is far and we have lots of time, pace ourselves
+          if(nearestBlue>6 && af%3===0)return null; // skip this tick — slow down
+        }
+        return huntDir;
+      }
     }
 
-    // Priority 2: If near a power pellet and ghosts are close, grab it
-    const nearestGhostDist=Math.min(...ghosts.filter(g=>g.mode!=='house'&&!g.eat&&!g.fr).map(g=>Math.abs(g.x-pac.x)+Math.abs(g.y-pac.y)));
-    if(nearestGhostDist<8){
-      const pelletDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&map[y][x]===3, null);
-      if(pelletDir)return pelletDir;
+    // Priority 2: POWER PELLET TRAP — wait near pellet for ghosts to approach
+    if(nearestPelletDist<=2 && !anyBlue){
+      // We're right next to a power pellet
+      if(nearestDangerDist<=5){
+        // Ghosts are close enough — EAT IT NOW!
+        return nearestPelletDir;
+      } else if(nearestDangerDist<=10){
+        // Ghosts approaching but not close enough yet — WAIT
+        // Eat nearby regular dots but don't eat the power pellet
+        const safeDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&map[y][x]===2, dm);
+        if(safeDir)return safeDir;
+        return null; // stand still and wait for ghosts
+      }
+      // Ghosts too far — just eat regular dots
     }
 
-    // Priority 3: Eat nearest dot, avoiding ghosts
+    // Priority 3: If ghosts are dangerously close, head toward a power pellet
+    if(nearestDangerDist<=4 && nearestPelletDir){
+      return nearestPelletDir;
+    }
+
+    // Priority 4: Eat nearest dot, avoiding ghosts
     const dotDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&(map[y][x]===2||map[y][x]===3), dm);
     if(dotDir)return dotDir;
 
-    // Priority 4: If danger-avoidance blocked all paths, try without it
+    // Priority 5: If danger-avoidance blocked all paths, try without it
     const anyDotDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&(map[y][x]===2||map[y][x]===3), null);
     if(anyDotDir)return anyDotDir;
 
@@ -320,7 +379,11 @@ const GST=[{x:14,y:11},{x:14,y:14},{x:12,y:14},{x:16,y:14}];
 const GSCAT=[{x:25,y:0},{x:2,y:0},{x:27,y:30},{x:0,y:30}];
 class Ghost{
   constructor(nm,i){this.nm=nm;this.i=i;this.col=GC[i];this.sx=GST[i].x;this.sy=GST[i].y;this.scat=GSCAT[i];this.pers=['approach_behind','approach_ahead','direct','wander_biased'][i];this.ql=new QL(nm);this.reset();}
-  reset(){this.x=this.sx;this.y=this.sy;this.dir=this.i===0?{x:-1,y:0}:{x:0,y:0};this.mp=0;this.spd=diff.gSpd;this.mode=this.i===0?'scatter':'house';this.fr=false;this.eat=false;this.rt=this.i*80;this.role=null;this.pdist=0;}
+  reset(){this.x=this.sx;this.y=this.sy;this.dir=this.i===0?{x:-1,y:0}:{x:0,y:0};this.mp=0;this.spd=diff.gSpd;this.mode=this.i===0?(isScat?'scatter':'chase'):'house';this.fr=false;this.eat=false;
+    // Release timers: faster on harder difficulties
+    const relMult=selDiff==='hard'?30:selDiff==='medium'?50:80;
+    this.rt=this.i*relMult;
+    this.role=null;this.pdist=0;}
   costFn(px,py,pd){
     const mo=new Set(),fr=new Set(),bh=new Set();
     for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;mo.add(`${wx(px+dx)},${py+dy}`);}
@@ -461,7 +524,8 @@ function startGame(){
   else{b.textContent='HARD';b.style.background='#f44';b.style.color='#fff';}
   // Ensure ghost speed is from preset (not from adaptive formula)
   ghosts.forEach(g=>{g.spd=p.gSpd;});
-  scIdx=0;scT=0;isScat=true;pm.reset();
+  // EASY starts in scatter, MEDIUM/HARD start in chase for immediate pursuit
+  scIdx=0;scT=0;isScat=(selDiff==='easy');pm.reset();
   document.getElementById('overlay').classList.add('hidden');document.getElementById('ai-panel').classList.add('active');document.getElementById('difficulty-badge').style.display='block';
   document.getElementById('ai-mode-badge').style.display=aiMode?'block':'none';
   gs='ready';readyT=90;document.getElementById('ready-text').style.display='block';updateUI();sndStart();
@@ -500,7 +564,7 @@ function update(){
   }
   if(af%3===0){pac.ma+=pac.mo?6:-6;if(pac.ma>=45)pac.mo=false;if(pac.ma<=2)pac.mo=true;}
   if(frightT>0){frightT--;if(frightT<=0)ghosts.forEach(g=>{g.fr=false;});}
-  scT++;const ST=[420,420,300,300],CT2=[1200,1200,1200,Infinity];const th=isScat?ST[Math.min(scIdx,3)]:CT2[Math.min(scIdx,3)];
+  scT++;const ST=[180,180,120,120],CT2=[1800,1800,2400,Infinity];const th=isScat?ST[Math.min(scIdx,3)]:CT2[Math.min(scIdx,3)];
   if(scT>=th&&th!==Infinity){scT=0;isScat=!isScat;if(isScat)scIdx++;ghosts.forEach(g=>{if(g.mode!=='house'&&!g.fr&&!g.eat){g.mode=isScat?'scatter':'chase';g.dir={x:-g.dir.x,y:-g.dir.y};}});}
   if(af%30===0)assignRoles();
   ghosts.forEach(g=>g.step(pac));
@@ -512,7 +576,7 @@ function update(){
 // ==== UI ====
 function updateUI(){document.getElementById('score').textContent=score;document.getElementById('high-score').textContent=Math.max(score,hi);let s='';for(let i=0;i<lives;i++)s+='❤ ';document.getElementById('lives-display').textContent=lives>0?s.trim():'💀';}
 function updPanel(){
-  document.getElementById('ai-diff').textContent=diff.level.toFixed(1);document.getElementById('ai-diff').className='ai-value'+(diff.level>=2.2?' danger':diff.level>=1.5?' warn':'');
+  document.getElementById('ai-diff').textContent=selDiff.toUpperCase()+' ('+diff.level.toFixed(1)+')';document.getElementById('ai-diff').className='ai-value'+(selDiff==='hard'?' danger':selDiff==='medium'?' warn':'');
   document.getElementById('ai-patterns').textContent=pm.moves.length+' moves';
   document.getElementById('ai-astar').textContent=diff.astar?'WEIGHTED A*':'GREEDY';
   const tq=ghosts.reduce((s2,g)=>s2+g.ql.stats().st,0),ae=ghosts.reduce((s2,g)=>s2+g.ql.eps,0)/4;
