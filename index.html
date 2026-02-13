@@ -247,7 +247,8 @@ let aiMode=false; // false=human plays, true=AI plays
 
 const pacAI={
   // BFS: find path to nearest target tile, avoiding ghost danger zones
-  bfs(startX, startY, targetFn, dangerMap){
+  // avoidFn: optional function(x,y) returning true for tiles to treat as walls
+  bfs(startX, startY, targetFn, dangerMap, avoidFn){
     const visited=new Set();
     const queue=[{x:startX,y:startY,firstDir:null,dist:0}];
     visited.add(`${startX},${startY}`);
@@ -263,6 +264,7 @@ const pacAI={
         if(ny<0||ny>=R)continue;
         if(!ok(nx,ny))continue;
         if(map[ny]&&map[ny][nx]===4)continue; // skip ghost gate
+        if(avoidFn&&avoidFn(nx,ny))continue; // skip avoided tiles
         const k=`${nx},${ny}`;
         if(visited.has(k))continue;
         // Skip tiles near ghosts (danger zones) unless we're frightening them
@@ -317,52 +319,56 @@ const pacAI={
       }
     }
 
-    // Priority 1: Hunt frightened ghosts — but pace yourself
+    // Treat power pellet tiles as WALLS during pathfinding (so AI never steps on them accidentally)
+    const avoidPP=(x,y)=>map[y]&&map[y][x]===3;
+    // Any regular dots left?
+    let hasRegDots=false;
+    for(let r=0;r<R&&!hasRegDots;r++)for(let c=0;c<C&&!hasRegDots;c++)if(map[r][c]===2)hasRegDots=true;
+
+    // Priority 1: Hunt frightened ghosts — route AROUND power pellets
     if(anyBlue && frightT>40){
-      // Find nearest blue ghost
       const huntDir=this.bfs(pac.x,pac.y,(x,y)=>{
         return blueGhosts.some(g=>g.x===x&&g.y===y);
-      }, null);
+      }, null, avoidPP);
       if(huntDir){
-        // Slow down pac-man during chase so we don't overshoot
-        // Skip every other move by returning null sometimes
         if(frightT>200 && blueGhosts.length>0){
           const nearestBlue=Math.min(...blueGhosts.map(g=>Math.abs(g.x-pac.x)+Math.abs(g.y-pac.y)));
-          // If blue ghost is far and we have lots of time, pace ourselves
-          if(nearestBlue>6 && af%3===0)return null; // skip this tick — slow down
+          if(nearestBlue>6 && af%3===0)return null;
         }
         return huntDir;
       }
     }
 
-    // Priority 2: POWER PELLET TRAP — wait near pellet for ghosts to approach
-    if(nearestPelletDist<=2 && !anyBlue){
-      // We're right next to a power pellet
-      if(nearestDangerDist<=5){
-        // Ghosts are close enough — EAT IT NOW!
-        return nearestPelletDir;
-      } else if(nearestDangerDist<=10){
-        // Ghosts approaching but not close enough yet — WAIT
-        // Eat nearby regular dots but don't eat the power pellet
-        const safeDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&map[y][x]===2, dm);
-        if(safeDir)return safeDir;
-        return null; // stand still and wait for ghosts
+    // Priority 2: POWER PELLET TRAP — lure ghosts then strike
+    if(nearestPelletDist<=3 && !anyBlue && hasRegDots){
+      if(nearestDangerDist<=4){
+        return nearestPelletDir; // SPRING THE TRAP
+      } else if(nearestDangerDist<=15){
+        // Wait — eat nearby regular dots, routing AROUND power pellets
+        const waitDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&map[y][x]===2, dm, avoidPP);
+        if(waitDir)return waitDir;
+        return null; // stand still
       }
-      // Ghosts too far — just eat regular dots
     }
 
-    // Priority 3: If ghosts are dangerously close, head toward a power pellet
+    // Priority 3: Emergency — ghost very close, rush to power pellet
     if(nearestDangerDist<=4 && nearestPelletDir){
       return nearestPelletDir;
     }
 
-    // Priority 4: Eat nearest dot, avoiding ghosts
-    const dotDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&(map[y][x]===2||map[y][x]===3), dm);
+    // Priority 4: Eat regular dots, routing AROUND power pellets
+    const dotDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&map[y][x]===2, dm, avoidPP);
     if(dotDir)return dotDir;
 
-    // Priority 5: If danger-avoidance blocked all paths, try without it
-    const anyDotDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&(map[y][x]===2||map[y][x]===3), null);
+    // Priority 5: No safe path — drop danger avoidance, still avoid pellets
+    const anyDotDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&map[y][x]===2, null, avoidPP);
     if(anyDotDir)return anyDotDir;
+
+    // Priority 6: Only power pellets remain — eat them
+    const ppDir=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&map[y][x]===3, dm);
+    if(ppDir)return ppDir;
+    const ppDir2=this.bfs(pac.x,pac.y,(x,y)=>map[y]&&map[y][x]===3, null);
+    if(ppDir2)return ppDir2;
 
     // Fallback: move in any valid direction
     for(const d of DIRS){
