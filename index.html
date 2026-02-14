@@ -68,8 +68,7 @@ canvas{display:block;width:100%;height:100%}
       </div>
       <div id="diff-desc" class="diff-desc">Slow ghosts · No A* · Long power-ups · 5 lives</div>
     </div>
-    <div class="start-hint" id="start-play">▶ PLAY</div>
-    <div class="start-hint" id="start-watch" style="margin-top:8px;border-color:#0ff;color:#0ff">🤖 WATCH AI</div>
+    <div class="start-hint" id="start-watch" style="margin-top:12px;border-color:#0ff;color:#0ff">🤖 WATCH AI</div>
   </div>
   <div id="ready-text">READY!</div>
   <div id="difficulty-badge">EASY</div>
@@ -146,9 +145,9 @@ document.getElementById('high-score').textContent=hi;
 
 // ==== PRESETS ====
 const PRE={
-  easy:{lives:5,gSpd:.10,frightD:600,astar:false,coop:false,pred:0,qEps:.35,startLvl:.5,desc:'Matched speed · No A* · Long power-ups · 5 lives'},
-  medium:{lives:3,gSpd:.11,frightD:400,astar:true,coop:false,pred:2,qEps:.15,startLvl:1.2,desc:'Slightly faster ghosts · A* · 3 lives'},
-  hard:{lives:2,gSpd:.125,frightD:200,astar:true,coop:true,pred:5,qEps:.05,startLvl:2.2,desc:'Same speed · Full A* · Q-exploit · 2 lives'}
+  easy:{lives:5,gSpd:.11,frightD:500,astar:true,coop:false,pred:0,qEps:.35,startLvl:.5,desc:'A* ghosts · No coop · Long power-ups · 5 lives'},
+  medium:{lives:3,gSpd:.12,frightD:350,astar:true,coop:true,pred:3,qEps:.15,startLvl:1.2,desc:'A* + Coop tactics · Pattern prediction · 3 lives'},
+  hard:{lives:2,gSpd:.14,frightD:200,astar:true,coop:true,pred:5,qEps:.05,startLvl:2.2,desc:'Fast A* · Full coop · Q-exploit · 2 lives'}
 };
 
 // ==== DIFFICULTY ====
@@ -386,8 +385,8 @@ const GSCAT=[{x:25,y:0},{x:2,y:0},{x:27,y:30},{x:0,y:30}];
 class Ghost{
   constructor(nm,i){this.nm=nm;this.i=i;this.col=GC[i];this.sx=GST[i].x;this.sy=GST[i].y;this.scat=GSCAT[i];this.pers=['approach_behind','approach_ahead','direct','wander_biased'][i];this.ql=new QL(nm);this.reset();}
   reset(){this.x=this.sx;this.y=this.sy;this.dir=this.i===0?{x:-1,y:0}:{x:0,y:0};this.mp=0;this.spd=diff.gSpd;this.mode=this.i===0?(isScat?'scatter':'chase'):'house';this.fr=false;this.eat=false;
-    // Release timers: faster on harder difficulties
-    const relMult=selDiff==='hard'?30:selDiff==='medium'?50:80;
+    // Release timers: quick release on all difficulties
+    const relMult=selDiff==='hard'?20:selDiff==='medium'?30:40;
     this.rt=this.i*relMult;
     this.role=null;this.pdist=0;}
   costFn(px,py,pd){
@@ -411,16 +410,30 @@ class Ghost{
   }
   act(p){
     const opp={x:-this.dir.x,y:-this.dir.y};const va=[];
-    for(let i=0;i<4;i++){const d=DIRS[i];if(d.x===opp.x&&d.y===opp.y)continue;if(gok(wx(this.x+d.x),this.y+d.y,this.mode,this.eat))va.push(i);}
+    // At house exit or just released: allow ALL directions (no opposite exclusion)
+    const atExit=(this.x===14&&this.y===11)||(this.x===13&&this.y===11)||(this.x===15&&this.y===11);
+    for(let i=0;i<4;i++){const d=DIRS[i];if(!atExit&&d.x===opp.x&&d.y===opp.y)continue;if(gok(wx(this.x+d.x),this.y+d.y,this.mode,this.eat))va.push(i);}
     if(!va.length)return this.dir;
-    const st=this.ql.enc(this,p),dist=Math.abs(this.x-p.x)+Math.abs(this.y-p.y);
-    let rw=-.5;if(!this.fr)rw+=(this.pdist-dist)*2;else rw+=(dist-this.pdist)*2;
-    this.ql.upd(rw,st,va);this.pdist=dist;
-    let aa=null;const tgt=this.target(p),cf=this.costFn(p.x,p.y,p.dir);
-    if(diff.astar&&!this.fr){const pd=astar(this.x,this.y,tgt.x,tgt.y,cf);if(pd)for(let i=0;i<4;i++)if(DIRS[i].x===pd.x&&DIRS[i].y===pd.y&&va.includes(i)){aa=i;break;}}
+    // Get target
+    const tgt=this.target(p);
+    // A* pathfinding — primary decision maker
+    let aa=null;
+    if(diff.astar){
+      const cf=this.fr?null:this.costFn(p.x,p.y,p.dir);
+      const pd=astar(this.x,this.y,tgt.x,tgt.y,cf);
+      if(pd)for(let i=0;i<4;i++)if(DIRS[i].x===pd.x&&DIRS[i].y===pd.y&&va.includes(i)){aa=i;break;}
+    }
+    // Greedy fallback if A* fails
     if(aa===null){let bd=1e9;for(const a of va){const d=DIRS[a],nx=wx(this.x+d.x),ny=this.y+d.y,dd=Math.abs(nx-tgt.x)+Math.abs(ny-tgt.y);if(dd<bd){bd=dd;aa=a;}}}
-    const qa=this.ql.pick(st,va),qc=this.ql.gq(st,qa)-(aa!==null?this.ql.gq(st,aa):0),lp=Math.min(1,this.ql.nu/500);
-    const ch=(lp>.3&&qc>1)?qa:(Math.random()<this.ql.eps*lp)?qa:(aa!==null?aa:qa);
+    // Q-learning: record and learn, but only override A* if very confident
+    const st=this.ql.enc(this,p),dist=Math.abs(this.x-p.x)+Math.abs(this.y-p.y);
+    let rw=-.1;if(!this.fr)rw+=(this.pdist-dist)*2;else rw+=(dist-this.pdist)*2;
+    this.ql.upd(rw,st,va);this.pdist=dist;
+    const qa=this.ql.pick(st,va);
+    const qConf=this.ql.gq(st,qa)-(aa!==null?this.ql.gq(st,aa):0);
+    const trained=this.ql.nu>1000;
+    // Only use Q-learning if it's very confident AND well-trained
+    const ch=(trained&&qConf>3)?qa:aa;
     this.ql.ls=st;this.ql.la=ch;return DIRS[ch];
   }
   step(p){
@@ -432,7 +445,7 @@ class Ghost{
     // Validate move target before committing
     const nx=wx(this.x+this.dir.x),ny=this.y+this.dir.y;
     if(ny>=0&&ny<R&&gok(nx,ny,this.mode,this.eat)){this.x=nx;this.y=ny;}
-    if(this.eat&&this.x===14&&this.y===14){this.eat=false;this.fr=false;this.mode=isScat?'scatter':'chase';this.spd=diff.gSpd;}
+    if(this.eat&&Math.abs(this.x-14)<=1&&Math.abs(this.y-14)<=1){this.eat=false;this.fr=false;this.mode='chase';this.x=14;this.y=11;this.dir={x:1,y:0};this.spd=diff.gSpd;}
   }
 }
 let ghosts=GN.map((n,i)=>new Ghost(n,i));
@@ -463,7 +476,7 @@ let inQ=[];
 let activeDir=null; // currently held d-pad direction (for mobile)
 function setDir(dx,dy){inQ=[{x:dx,y:dy}];}
 document.addEventListener('keydown',e=>{ensureAudio();
-  if(gs==='menu'||gs==='gameover'||gs==='win'){if(e.key==='Enter'||e.key===' '){aiMode=false;startGame();e.preventDefault();return;}}
+  if(gs==='menu'||gs==='gameover'||gs==='win'){if(e.key==='Enter'||e.key===' '){aiMode=true;startGame();e.preventDefault();return;}}
   let d=null;
   switch(e.key){case'ArrowUp':case'w':case'W':d={x:0,y:-1};break;case'ArrowDown':case's':case'S':d={x:0,y:1};break;case'ArrowLeft':case'a':case'A':d={x:-1,y:0};break;case'ArrowRight':case'd':case'D':d={x:1,y:0};break;default:return;}
   e.preventDefault();
@@ -502,16 +515,14 @@ Object.entries(dpadMap).forEach(([id,d])=>{
 });
 
 // ==== GAME MGT ====
-function showOv(t,h){const o=document.getElementById('overlay');o.classList.remove('hidden');o.querySelector('h1').textContent=t;document.getElementById('start-play').textContent=h.includes('NEXT')?'▶ NEXT LEVEL':'▶ PLAY';document.getElementById('start-watch').style.display=h.includes('NEXT')?'none':'block';document.getElementById('diff-select').style.display='block';}
+function showOv(t,h){const o=document.getElementById('overlay');o.classList.remove('hidden');o.querySelector('h1').textContent=t;document.getElementById('start-watch').textContent=h.includes('NEXT')?'🤖 NEXT LEVEL':'🤖 WATCH AI';document.getElementById('diff-select').style.display='block';}
 
 // Prevent double-fire from touch+click
 let startLock=false;
 function doStart(ai){
   if(startLock)return;startLock=true;setTimeout(()=>startLock=false,300);
-  ensureAudio();aiMode=ai;startGame();
+  ensureAudio();aiMode=true;startGame();
 }
-document.getElementById('start-play').addEventListener('click',e=>{e.stopPropagation();doStart(false);});
-document.getElementById('start-play').addEventListener('touchend',e=>{e.preventDefault();e.stopPropagation();doStart(false);},{passive:false});
 document.getElementById('start-watch').addEventListener('click',e=>{e.stopPropagation();doStart(true);});
 document.getElementById('start-watch').addEventListener('touchend',e=>{e.preventDefault();e.stopPropagation();doStart(true);},{passive:false});
 function startGame(){
@@ -530,8 +541,8 @@ function startGame(){
   else{b.textContent='HARD';b.style.background='#f44';b.style.color='#fff';}
   // Ensure ghost speed is from preset (not from adaptive formula)
   ghosts.forEach(g=>{g.spd=p.gSpd;});
-  // EASY starts in scatter, MEDIUM/HARD start in chase for immediate pursuit
-  scIdx=0;scT=0;isScat=(selDiff==='easy');pm.reset();
+  // Always start in chase — ghosts pursue immediately
+  scIdx=0;scT=0;isScat=false;pm.reset();
   document.getElementById('overlay').classList.add('hidden');document.getElementById('ai-panel').classList.add('active');document.getElementById('difficulty-badge').style.display='block';
   document.getElementById('ai-mode-badge').style.display=aiMode?'block':'none';
   gs='ready';readyT=90;document.getElementById('ready-text').style.display='block';updateUI();sndStart();
